@@ -12,7 +12,7 @@ def get_audio_devices():
         return []
 
 class AudioCaptureThread(threading.Thread):
-    def __init__(self, device_id=None, buffer_size=4096, sample_rate=44100):
+    def __init__(self, device_id=None, buffer_size=8192, sample_rate=44100):
         super().__init__()
         self.device_id = device_id
         self.buffer_size = buffer_size

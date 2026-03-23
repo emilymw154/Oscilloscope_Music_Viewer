@@ -3,7 +3,7 @@ import os
 os.environ["PYQTGRAPH_QT_LIB"] = "PySide6"
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QLabel, QComboBox, QDial
+from PySide6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QLabel, QComboBox, QDial, QSlider
 from PySide6.QtCore import QTimer, Qt
 from audio_capture import AudioCaptureThread, get_audio_devices
 
@@ -22,6 +22,7 @@ class OscilloscopeApp(QMainWindow):
         # Plot Setup
         pg.setConfigOption('background', 'k')
         pg.setConfigOption('foreground', 'g')
+        pg.setConfigOptions(antialias=True)
         self.plot_widget = pg.PlotWidget()
         
         # To maintain circular shapes correctly without stretching we lock the aspect ratio
@@ -56,6 +57,10 @@ class OscilloscopeApp(QMainWindow):
         # We will map L to X and R to Y by default
         self.x_scale = 1.0
         self.y_scale = 1.0
+        self.line_width = 1.5
+        self.trace_length = 4096
+        self.base_color = (0, 255, 0)
+        self.intensity = 60
         
         # X Scale Controls
         x_label = QLabel("X (Left) Volts/Div:")
@@ -112,6 +117,39 @@ class OscilloscopeApp(QMainWindow):
         
         main_layout.addLayout(controls_layout)
         
+        # Advanced Controls Layout
+        adv_layout = QHBoxLayout()
+        adv_layout.setContentsMargins(10, 0, 10, 10)
+        
+        trace_label = QLabel("Trace Length:")
+        self.trace_slider = QSlider(Qt.Horizontal)
+        self.trace_slider.setRange(100, 8192)
+        self.trace_slider.setValue(4096)
+        self.trace_slider.valueChanged.connect(self.update_trace_length)
+        
+        width_label = QLabel("Line Width:")
+        self.width_slider = QSlider(Qt.Horizontal)
+        self.width_slider.setRange(1, 50)
+        self.width_slider.setValue(15)
+        self.width_slider.valueChanged.connect(self.update_line_width)
+        
+        color_label = QLabel("Phosphor Color:")
+        self.color_combo = QComboBox()
+        self.color_combo.addItems(["P31 Green", "P7 Amber", "P4 White", "Blue", "Red"])
+        self.color_combo.setStyleSheet("background-color: #444; padding: 5px;")
+        self.color_combo.currentIndexChanged.connect(self.update_color)
+        
+        adv_layout.addWidget(trace_label)
+        adv_layout.addWidget(self.trace_slider, stretch=1)
+        adv_layout.addSpacing(20)
+        adv_layout.addWidget(width_label)
+        adv_layout.addWidget(self.width_slider, stretch=1)
+        adv_layout.addSpacing(20)
+        adv_layout.addWidget(color_label)
+        adv_layout.addWidget(self.color_combo)
+        
+        main_layout.addLayout(adv_layout)
+        
         # Device Selection Layout
         device_layout = QHBoxLayout()
         device_layout.setContentsMargins(10, 0, 10, 10)
@@ -132,9 +170,9 @@ class OscilloscopeApp(QMainWindow):
         
         # Start Audio Thread
         if self.devices:
-            self.audio_thread = AudioCaptureThread(device_id=self.devices[0]["id"], buffer_size=4096)
+            self.audio_thread = AudioCaptureThread(device_id=self.devices[0]["id"], buffer_size=8192)
         else:
-            self.audio_thread = AudioCaptureThread(buffer_size=4096)
+            self.audio_thread = AudioCaptureThread(buffer_size=8192)
             
         self.audio_thread.start()
         
@@ -167,19 +205,43 @@ class OscilloscopeApp(QMainWindow):
         if hasattr(self, 'audio_thread') and self.audio_thread.running:
             self.audio_thread.stop()
             
-        self.audio_thread = AudioCaptureThread(device_id=device_id, buffer_size=4096)
+        self.audio_thread = AudioCaptureThread(device_id=device_id, buffer_size=8192)
         self.audio_thread.start()
 
+    def update_trace_length(self, value):
+        self.trace_length = value
+
+    def update_line_width(self, value):
+        self.line_width = value / 10.0
+        self.apply_pen()
+
+    def update_color(self, index):
+        colors = [
+            (0, 255, 0),     # P31 Green
+            (255, 170, 0),   # P7 Amber
+            (240, 240, 255), # P4 White
+            (50, 150, 255),  # Blue
+            (255, 50, 50)    # Red
+        ]
+        self.base_color = colors[index]
+        self.apply_pen()
+
     def update_brightness(self, value):
-        line_alpha = min(255, value)
-        dot_alpha = min(255, max(1, int(value / 1.5)))
+        self.intensity = value
+        self.apply_pen()
         
-        pen = pg.mkPen(color=(0, 255, 0, line_alpha), width=1.5)
+    def apply_pen(self):
+        line_alpha = min(255, self.intensity)
+        dot_alpha = min(255, max(1, int(self.intensity / 1.5)))
+        r, g, b = self.base_color
+        
+        pen = pg.mkPen(color=(r, g, b, line_alpha), width=self.line_width)
         self.curve.setPen(pen)
-        self.curve.setSymbolBrush((0, 255, 0, dot_alpha))
+        self.curve.setSymbolBrush((r, g, b, dot_alpha))
 
     def update_plot(self):
         data = self.audio_thread.get_data()
+        data = data[-self.trace_length:] # Apply trace length truncation
         
         # We plot L as X and R as Y. This is typical for Jerobeam Fenderson osci-music.
         # data[:, 0] = Left
